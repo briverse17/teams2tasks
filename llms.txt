@@ -1,0 +1,12 @@
+# MS Teams Scraper
+> A Playwright-based Python script for automated Teams conversation extraction.
+
+## Core Files
+- [main.py]: Primary entry point; handles auth, navigation, and scraping.
+- [teams_auth.json]: Browser session storage (cookies, local storage).
+
+## Key Concepts
+- **Storage State**: Uses Playwright's `storage_state` to bypass manual login once authenticated.
+- **Tree-based Selectors**: Specifically targets `[role="treeitem"]` for the Teams V2 sidebar.
+- **Iframe Scraper**: Iterates through `page.frames` to reliably locate message panes outside the main DOM root.
+- **Daily Cutoff**: Logic filters messages using `datetime.now().replace(hour=0, minute=0, second=0)`.
