@@ -3,11 +3,12 @@
 
 import json
 from pathlib import Path
+
 from src.inference.engine import infer_tasks_from_chat
 
 # Load the scraped data
 data_path = Path("outputs/scrape_default_20260330_232642.json")
-with open(data_path, "r", encoding="utf-8") as f:
+with open(data_path, encoding="utf-8") as f:
     data = json.load(f)
 
 # Target chats
@@ -35,13 +36,14 @@ for chat in data["chats"]:
     if chat_name in target_chats:
         found_chats.append(chat_name)
         messages = chat.get("messages", [])
-        
+
         print(f"Processing: {chat_name} ({len(messages)} messages)")
         try:
             tasks = infer_tasks_from_chat(
-                chat_name=chat_name,
-                messages=messages,
-                user_name=user_name
+                chat_name=chat_name, 
+                messages=messages, 
+                user_name=user_name,
+                window_size=30
             )
             print(f"  → Found {len(tasks)} tasks")
             all_tasks.extend(tasks)
@@ -49,7 +51,7 @@ for chat in data["chats"]:
             print(f"  ✗ Error: {e}")
 
 # Report results
-print(f"\n{'='*60}")
+print(f"\n{'=' * 60}")
 print(f"Total tasks found: {len(all_tasks)}")
 print(f"Chats processed: {len(found_chats)}")
 if len(found_chats) < len(target_chats):
@@ -64,7 +66,7 @@ print(f"Results saved to: {output_path}")
 
 # Display tasks
 if all_tasks:
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Inferred Tasks:")
     for i, task in enumerate(all_tasks, 1):
         print(f"\n{i}. {task.get('title', 'N/A')}")
