@@ -9,6 +9,18 @@ wheels/
 # Virtual environments
 .venv
 
+# Linters and type checkers
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Logs
+*.log
+
+# Local config (user-specific)
+.opencode/
+
+# Project-specific
 outputs/
 /teams_auth.json
 /.env

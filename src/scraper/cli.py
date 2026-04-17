@@ -33,5 +33,17 @@ def scrape_by_dates(
     console.print(f"[bold cyan]Fetching messages for dates: {dates}...[/bold cyan]")
     asyncio.run(scraper.scrape(mode="by_dates", targets=dates))
 
+@app.command(name="by-range")
+def scrape_by_range(
+    from_date: str = typer.Argument(..., help="Start date (YYYY-MM-DD or DD/MM)"),
+    to_date: Optional[str] = typer.Argument(None, help="End date (YYYY-MM-DD or DD/MM), defaults to today"),
+    stop_early: bool = typer.Option(False, "--stop-early", help="Stop scanning sidebar when a chat is before from-date")
+):
+    """Scrape messages within a date range."""
+    scraper = TeamsScraper(auth_path=str(settings.auth_path))
+    to_date_str = to_date if to_date else "today"
+    console.print(f"[bold cyan]Fetching messages from {from_date} to {to_date_str} (stop_early={stop_early})...[/bold cyan]")
+    asyncio.run(scraper.scrape(mode="by_range", targets=[from_date, to_date] if to_date else [from_date], stop_early=stop_early))
+
 if __name__ == "__main__":
     app()

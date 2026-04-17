@@ -1,7 +1,7 @@
 import asyncio
 import json
 import re
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import List, Optional, Set, Union
 
@@ -58,18 +58,123 @@ class TeamsScraper:
 
     def _parse_date(self, date_str: str) -> Optional[date]:
         """Parses various date formats to date object."""
+        if not date_str:
+            return None
         try:
             return date.fromisoformat(date_str)
         except ValueError:
             try:
-                # Handle DD/MM or MM/DD - risky, assuming DD/MM
+                # Handle DD/MM or MM/DD or DD-MM
                 today = date.today()
-                parts = date_str.split('/')
-                if len(parts) == 2:
-                    return date(today.year, int(parts[1]), int(parts[0]))
+                # Try common separators
+                for sep in ['/', '-', '.']:
+                    if sep in date_str:
+                        parts = date_str.split(sep)
+                        if len(parts) == 2:
+                            # Assume DD/MM and current year
+                            return date(today.year, int(parts[1]), int(parts[0]))
+                        if len(parts) == 3:
+                            # DD/MM/YYYY or YYYY/MM/DD
+                            if len(parts[0]) == 4:
+                                return date(int(parts[0]), int(parts[1]), int(parts[2]))
+                            else:
+                                return date(int(parts[2]), int(parts[1]), int(parts[0]))
             except:
                 pass
         return None
+
+    def _parse_sidebar_date(self, text: str) -> Optional[date]:
+        """Parses various sidebar date formats into date objects."""
+        if not text:
+            return None
+            
+        # Clean up common noise and non-standard characters
+        text = text.strip().replace('\xa0', ' ').replace('\n', ' ')
+        today = date.today()
+        
+        # 1. Long formats (e.g. "Monday, March 30, 2026" or "Apr 1, 2026")
+        # Attempt to parse using common patterns
+        month_names = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+        month_full = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
+        
+        lower_text = text.lower()
+        found_month = -1
+        for i, m in enumerate(month_names):
+            if m in lower_text:
+                found_month = i + 1
+                break
+        if found_month == -1:
+            for i, m in enumerate(month_full):
+                if m in lower_text:
+                    found_month = i + 1
+                    break
+        
+        if found_month != -1:
+            # Extract day and year if possible
+            match_day = re.search(r'\b(\d{1,2})(?:st|nd|rd|th)?\b', text)
+            match_year = re.search(r'\b(20\d{2})\b', text)
+            
+            if match_day:
+                day = int(match_day.group(1))
+                year = int(match_year.group(1)) if match_year else today.year
+                try:
+                    dt = date(year, found_month, day)
+                    # If this yields a future date, check if year rollover is needed
+                    if dt > today and not match_year:
+                        dt = date(year - 1, found_month, day)
+                    return dt
+                except:
+                    pass
+
+        # 2. Time only (e.g. "12:34 PM") -> Today
+        if re.search(r'\d{1,2}:\d{2}\s*(?:AM|PM)?', text, re.IGNORECASE):
+            return today
+            
+        # 3. "Yesterday"
+        if "yesterday" in lower_text:
+            return today - timedelta(days=1)
+            
+        # 4. Weekdays ("Mon", "Tue", etc.)
+        weekdays = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+        for i, day in enumerate(weekdays):
+            if day in lower_text:
+                target_day = i
+                current_day = today.weekday()
+                diff = (current_day - target_day) % 7
+                if diff == 0: diff = 7
+                return today - timedelta(days=diff)
+                
+        # 5. Numeric patterns: DD/MM or MM/DD logic moved to a multi-interpret helper
+        return None
+
+    def _get_ambiguous_sidebar_dates(self, text: str) -> Set[date]:
+        """Returns a set of possible dates for an ambiguous numeric string (e.g., '4/2' -> {Feb 4, Apr 2})."""
+        dates = set()
+        if not text:
+            return dates
+            
+        match = re.search(r'(\d{1,2})[/-](\d{1,2})', text)
+        if match:
+            a, b = int(match.group(1)), int(match.group(2))
+            today = date.today()
+            
+            # Possible interpretation 1: DD/MM
+            try:
+                if 1 <= b <= 12 and 1 <= a <= 31:
+                    d1 = date(today.year, b, a)
+                    if d1 > today: d1 = date(today.year - 1, b, a)
+                    dates.add(d1)
+            except: pass
+            
+            # Possible interpretation 2: MM/DD
+            try:
+                if 1 <= a <= 12 and 1 <= b <= 31:
+                    d2 = date(today.year, a, b)
+                    if d2 > today: d2 = date(today.year - 1, a, b)
+                    dates.add(d2)
+            except: pass
+            
+        return dates
 
     async def _get_chat_id(self, chat_item) -> str:
         """Extracts chat ID from elements like id='title-chat-list-item_ID'."""
@@ -138,7 +243,7 @@ class TeamsScraper:
             logger.debug(f"Info extraction error: {e}")
             return {"name": "Unknown", "email": None, "timestamp": None}
 
-    async def scrape(self, mode: str = "default", targets: List[str] = None):
+    async def scrape(self, mode: str = "default", targets: List[str] = None, stop_early: bool = False):
         async with async_playwright() as p:
             context = await self._setup_context(p)
             page = await context.new_page()
@@ -165,9 +270,16 @@ class TeamsScraper:
             logger.info(f"Found {len(chat_elements)} candidate chat items in sidebar.")
 
             target_dates = []
+            from_date = None
+            to_date = None
+
             if mode == "by_dates" and targets:
                 target_dates = [self._parse_date(d) for d in targets if self._parse_date(d)]
-                logger.info(f"Filtering for dates: {target_dates}")
+                logger.info(f"Filtering for specific dates: {target_dates}")
+            elif mode == "by_range" and targets:
+                from_date = self._parse_date(targets[0])
+                to_date = self._parse_date(targets[1]) if len(targets) > 1 else date.today()
+                logger.info(f"Filtering for range: {from_date} to {to_date} (stop_early={stop_early})")
 
             chats_data = []
             for chat_el in chat_elements:
@@ -190,6 +302,61 @@ class TeamsScraper:
                         should_process = True
                 elif mode == "by_dates":
                     should_process = True 
+                elif mode == "by_range":
+                    # Targeted sidebar date extraction - using multiple signals
+                    signals = []
+                    ts_el = await chat_el.query_selector('time, [class*="timestamp"], [data-tid*="timestamp"]')
+                    if ts_el:
+                        signals.append(await ts_el.get_attribute("aria-label"))
+                        signals.append(await ts_el.get_attribute("title"))
+                        signals.append(await ts_el.inner_text())
+                    
+                    signals = [s for s in signals if s]
+                    
+                    # Try to parse any signal unambiguously
+                    sidebar_date = None
+                    for s in signals:
+                        sidebar_date = self._parse_sidebar_date(s)
+                        if sidebar_date:
+                            logger.debug(f"Chat '{chat_name}' sidebar signal '{s}' -> {sidebar_date}")
+                            break
+                    
+                    if sidebar_date:
+                        if from_date and to_date:
+                            if from_date <= sidebar_date <= to_date:
+                                logger.info(f"Chat '{chat_name}' active on {sidebar_date}. Processing...")
+                                should_process = True
+                            elif sidebar_date < from_date:
+                                if stop_early:
+                                    logger.info(f"Chat '{chat_name}' active on {sidebar_date} (too old). Stopping early.")
+                                    break
+                                else:
+                                    logger.debug(f"Chat '{chat_name}' active on {sidebar_date} (too old). Skipping.")
+                                    should_process = False
+                            else:
+                                logger.debug(f"Chat '{chat_name}' active on {sidebar_date} (too new). Skipping.")
+                                should_process = False
+                        else:
+                            should_process = True
+                    else:
+                        # Ambiguity Check: handle numeric e.g. "4/2"
+                        potential_dates = set()
+                        for s in signals:
+                            potential_dates.update(self._get_ambiguous_sidebar_dates(s))
+                        
+                        if potential_dates:
+                            # If ANY interpretation falls in range, we must process it
+                            in_range = [d for d in potential_dates if from_date <= d <= to_date]
+                            if in_range:
+                                logger.info(f"Chat '{chat_name}' has ambiguous date(s) {potential_dates}. Interpretations {in_range} are in range. Opening...")
+                                should_process = True
+                            else:
+                                logger.debug(f"Chat '{chat_name}' has ambiguous date(s) {potential_dates}. None are in range. Skipping.")
+                                should_process = False
+                        else:
+                            # Final fallback: open to verify
+                            logger.debug(f"Could not parse sidebar date for '{chat_name}'. Opening to verify.")
+                            should_process = True
 
                 if not should_process:
                     continue
@@ -246,9 +413,11 @@ class TeamsScraper:
                         if mode == "default":
                             if msg_date != date.today():
                                 continue
-                        elif mode == "by_dates" and target_dates:
-                            if msg_date not in target_dates:
                                 continue
+                        elif mode == "by_range":
+                            if from_date and to_date:
+                                if not (from_date <= msg_date <= to_date):
+                                    continue
                                 
                         text = await msg_el.inner_text()
                         mid = await msg_el.get_attribute("data-mid")
