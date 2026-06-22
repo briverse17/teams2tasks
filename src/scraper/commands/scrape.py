@@ -31,7 +31,7 @@ def scrape_chats(
         False, "--stop-early", help="Stop scanning sidebar when a chat is before from-date"
     ),
     headless: bool = typer.Option(
-        True, "--headless/--no-headless", help="Run browser in headless mode"
+        True, "--headless/--headful", help="Run browser in headless mode"
     ),
 ) -> None:
     """Scrape Teams chat history. Defaults to today's active chats.
