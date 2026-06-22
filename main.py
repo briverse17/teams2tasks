@@ -1,3 +1,7 @@
+"""Main entry point for MS Teams scraper and task inference CLI."""
+
+# ruff: noqa: E402
+
 import sys
 from pathlib import Path
 

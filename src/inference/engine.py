@@ -1,6 +1,7 @@
 """Engine to extract tasks from a Teams chat."""
 
 import json
+from typing import Any, cast
 
 import dspy
 
@@ -11,7 +12,7 @@ lm = dspy.LM("openai/gpt-4o")
 dspy.configure(lm=lm)
 
 
-class TeamsChatToTasks(dspy.Signature):
+class TeamsChatToTasks(dspy.Signature):  # type: ignore[misc]
     """Analyze carefully the Teams chat history provided.
 
     Identify ONLY tasks assigned to or owned by the specified user.
@@ -35,7 +36,7 @@ context_tags, source_messages"""
     )
 
 
-class TaskExtractor(dspy.Module):
+class TaskExtractor(dspy.Module):  # type: ignore[misc]
     """Extract tasks from a Teams chat."""
 
     def __init__(self, user_name: str) -> None:
@@ -45,7 +46,13 @@ class TaskExtractor(dspy.Module):
         # Use dspy.Predict with the defined signature
         self.extractor = dspy.Predict(TeamsChatToTasks)
 
-    def forward(self, chat_name: str, messages: list[dict], window_size: int = 30) -> list[dict]:
+    def forward(
+        self,
+        chat_name: str,
+        messages: list[dict[str, Any]],
+        window_size: int = 30,
+        custom_instructions: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Forward pass to extract tasks from a Teams chat."""
         # Use a window of the most recent messages instead of a specific date
         recent_messages = messages[-window_size:] if len(messages) > window_size else messages
@@ -62,6 +69,8 @@ class TaskExtractor(dspy.Module):
             formatted_history.append(f"[{timestamp}] {sender}: {text}")
 
         history_str = "\n".join(formatted_history)
+        if custom_instructions:
+            history_str += f"\n\n[CUSTOM DIRECTIVES FOR THIS CHAT]: {custom_instructions}"
 
         # Run extraction with user context
         response = self.extractor(
@@ -132,8 +141,21 @@ class TaskExtractor(dspy.Module):
 
 
 def infer_tasks_from_chat(
-    chat_name: str, messages: list[dict], user_name: str, window_size: int = 30
-) -> list[dict]:
+    chat_name: str,
+    messages: list[dict[str, Any]],
+    user_name: str,
+    window_size: int = 30,
+    custom_instructions: str | None = None,
+) -> list[dict[str, Any]]:
     """Run the inference engine on a sliding window of recent messages."""
     engine = TaskExtractor(user_name=user_name)
-    return engine(chat_name=chat_name, messages=messages, window_size=window_size)
+    return cast(
+        list[dict[str, Any]],
+        engine(
+            chat_name=chat_name,
+            messages=messages,
+            window_size=window_size,
+            custom_instructions=custom_instructions,
+        ),
+    )
+

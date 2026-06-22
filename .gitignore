@@ -24,3 +24,5 @@ wheels/
 outputs/
 /teams_auth.json
 /.env
+/teams_profile
+chats_config.yaml
